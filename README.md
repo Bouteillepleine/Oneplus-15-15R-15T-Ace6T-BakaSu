@@ -42,16 +42,14 @@ It syncs Android GKI sources, adds **BakaSU**, optionally applies **SUSFS**, and
 | `android16-6.12-2026-03` | 6.12.69 | 6 | no OnePlus OTA yet |
 | `android16-6.12-2026-06` | 6.12.81 | 6 | no OnePlus OTA yet |
 | `android16-6.12-2026-09` | 6.12.92 | 6 | no OnePlus OTA yet |
-| `android16-6.12-sp` | 6.12.81 | 6 | security-patch tip, moving target |
-| `android16-6.12-lts` | 6.12.96 | 6 | LTS tip, moving target |
 
 > Anything past `2025-12` is a plain AOSP branch — KMI-6, so it boots on
-> post-OTA firmware, but no OnePlus build has ever shipped it. `-sp` and `-lts`
-> are branch tips, so their kernel version moves with Google's LTS merges.
+> post-OTA firmware, but no OnePlus build has ever shipped it.
 >
 > Not offered: `2025-07` / `2025-08` (the manifest branch exists but Google
 > deleted the matching `kernel/common` ref, so `repo sync` cannot resolve it),
-> `2025-05-exp` (KMI 4), `-kminext` (KMI 7) and the `-desktop` variants.
+> `2025-05-exp` (KMI 4), `-kminext` (KMI 7), the moving `-sp` / `-lts` tips and
+> the `-desktop` variants.
 
 ### What `DEVICE=all` builds
 

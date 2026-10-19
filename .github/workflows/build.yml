@@ -59,7 +59,7 @@ on:
 
       GKI_RELEASE:
         type: choice
-        description: "🧬 GKI release branch: auto = per-device default | dated = 6.12.23/38/58/69/81/92 | sp/lts = moving tips"
+        description: "🧬 GKI release branch: auto = per-device default | dated = 6.12.23/38/58/69/81/92"
         required: true
         default: auto
         options:
@@ -70,8 +70,6 @@ on:
           - android16-6.12-2026-03
           - android16-6.12-2026-06
           - android16-6.12-2026-09
-          - android16-6.12-sp
-          - android16-6.12-lts
 
       LSM:
         type: boolean
@@ -1097,9 +1095,9 @@ jobs:
             name="$(basename "$patch_file")"
 
             # -F 0 on the first tier: GNU patch defaults to fuzz 2, which would
-            # silently absorb context drift. All 6.12 releases through 6.12.96
-            # take these patches at zero fuzz, so anything needing fuzz is drift
-            # worth a warning.
+            # silently absorb context drift. Every selectable 6.12 release takes
+            # these patches at zero fuzz (verified through 6.12.92), so anything
+            # needing fuzz is drift worth a warning.
             if patch -p1 --dry-run -F 0 < "$patch_file" >/dev/null 2>&1; then
               echo "📝 Applying ${name}"
               patch -p1 -F 0 < "$patch_file"
@@ -1884,8 +1882,6 @@ jobs:
             | `6.12.69` | `common-android16-6.12-2026-03` | 6 | KMI-6 firmware |
             | `6.12.81` | `common-android16-6.12-2026-06` | 6 | KMI-6 firmware |
             | `6.12.92` | `common-android16-6.12-2026-09` | 6 | KMI-6 firmware |
-            | *moving* | `common-android16-6.12-sp` | 6 | KMI-6 firmware |
-            | *moving* | `common-android16-6.12-lts` | 6 | KMI-6 firmware |
 
             > ⚠️ Match the **KMI generation** to your firmware. A KMI-6 kernel
             > (6.12.58 and newer) will not load the KMI-5 `vendor_dlkm` modules
@@ -1893,8 +1889,6 @@ jobs:
             >
             > The releases past `2025-12` are AOSP GKI branches no OnePlus OTA has
             > shipped yet — they boot on KMI-6 firmware but are untested territory.
-            > `-sp` and `-lts` are moving tips, so their kernel version changes
-            > whenever Google merges LTS.
             >
             > Only the kernels actually built by this run are attached below.
 
