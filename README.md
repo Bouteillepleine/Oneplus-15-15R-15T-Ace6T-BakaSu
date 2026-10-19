@@ -39,9 +39,9 @@ It syncs Android GKI sources, adds **BakaSU**, optionally applies **SUSFS**, and
 | `android16-6.12-2025-06` | 6.12.23 | 5 | OnePlus 15 / 15T launch firmware (retired upstream, auto-redirected to `deprecated/`) |
 | `android16-6.12-2025-09` | 6.12.38 | 5 | OnePlus 15R / Ace 6T launch firmware |
 | `android16-6.12-2025-12` | 6.12.58 | 6 | Sept-2026 OTA, Pad 3 Pro / Pad 4 |
-| `android16-6.12-2026-03` | 6.12.69 | 6 | no OnePlus OTA yet |
-| `android16-6.12-2026-06` | 6.12.81 | 6 | no OnePlus OTA yet |
-| `android16-6.12-2026-09` | 6.12.92 | 6 | no OnePlus OTA yet |
+| `android16-6.12-2026-03` | 6.12.69 | 6 | OnePlus 15 / 15T / 15R / Ace 6T / Pad 3 Pro / Pad 4 (no OnePlus OTA on this release yet) |
+| `android16-6.12-2026-06` | 6.12.81 | 6 | OnePlus 15 / 15T / 15R / Ace 6T / Pad 3 Pro / Pad 4 (no OnePlus OTA on this release yet) |
+| `android16-6.12-2026-09` | 6.12.92 | 6 | OnePlus 15 / 15T / 15R / Ace 6T / Pad 3 Pro / Pad 4 (no OnePlus OTA on this release yet) |
 
 > Anything past `2025-12` is a plain AOSP branch — KMI-6, so it boots on
 > post-OTA firmware, but no OnePlus build has ever shipped it.
