@@ -59,7 +59,7 @@ on:
 
       GKI_RELEASE:
         type: choice
-        description: "🧬 GKI release branch: auto = per-device default | 2025-12 = 6.12.58 android16-6"
+        description: "🧬 GKI release branch: auto = per-device default | dated = 6.12.23/38/58/69/81/92 | sp/lts = moving tips"
         required: true
         default: auto
         options:
@@ -67,6 +67,11 @@ on:
           - android16-6.12-2025-06
           - android16-6.12-2025-09
           - android16-6.12-2025-12
+          - android16-6.12-2026-03
+          - android16-6.12-2026-06
+          - android16-6.12-2026-09
+          - android16-6.12-sp
+          - android16-6.12-lts
 
       LSM:
         type: boolean
@@ -591,6 +596,13 @@ jobs:
             fi
           done
 
+          # Every android16-6.12-* release branch reports BRANCH=android16-6.12 but
+          # its own KMI_GENERATION (4/5/6/7). The generation is the leading digit of
+          # the stock version suffix, so capture it for "Apply Kernel Suffix".
+          KMI_GENERATION="$(grep -m1 '^KMI_GENERATION=' ./common/build.config.constants 2>/dev/null | cut -d= -f2 | tr -cd '0-9' || true)"
+          echo "KMI_GENERATION=${KMI_GENERATION}" >> "$GITHUB_ENV"
+          echo "🧬 KMI generation: ${KMI_GENERATION:-unknown}"
+
           if [ -n "$BRANCH" ]; then
             KANDROID_VERSION="${BRANCH%%-*}"
             KERNEL_VERSION="${BRANCH#"${KANDROID_VERSION}-"}"
@@ -632,6 +644,9 @@ jobs:
           elif [ -n "$INPUT_SUFFIX" ]; then
             SUFFIX="$INPUT_SUFFIX"
           else
+            # Verbatim suffixes lifted from shipping OnePlus firmware. These are
+            # OEM build strings, not AOSP ones, so they only exist for the three
+            # releases a OnePlus OTA has actually shipped.
             case "${KERNEL_BRANCH:-}" in
               android16-6.12-2025-06) STOCK_SUFFIX="5-gb2a876903b49-ab14541642-4k" ;;
               android16-6.12-2025-09) STOCK_SUFFIX="5-g844001fb8721-ab14552068-4k" ;;
@@ -641,7 +656,16 @@ jobs:
 
             if [ -n "$STOCK_SUFFIX" ]; then
               SUFFIX="$STOCK_SUFFIX"
-              echo "🧬 Derived stock suffix for common-${KERNEL_BRANCH}: ${SUFFIX}"
+              echo "🧬 Known stock suffix for common-${KERNEL_BRANCH}: ${SUFFIX}"
+            elif [ -n "${KMI_GENERATION:-}" ] && COMMON_SHA="$(git -C common rev-parse HEAD 2>/dev/null)"; then
+              # No OEM string for this release: synthesize a stock-shaped one.
+              # Correct KMI generation from build.config.constants, the real
+              # kernel/common commit we just synced, and an ab-id derived from
+              # that commit so repeat builds of a branch stay reproducible.
+              SCM_SHA="${COMMON_SHA:0:12}"
+              AB_ID=$(( 0x${COMMON_SHA:0:7} % 90000000 + 10000000 ))
+              SUFFIX="${KMI_GENERATION}-g${SCM_SHA}-ab${AB_ID}-4k"
+              echo "🧬 Synthesized suffix for common-${KERNEL_BRANCH} (KMI ${KMI_GENERATION}): ${SUFFIX}"
             else
               RANDOM_DIGIT=$(od -An -N1 -tu1 < /dev/urandom | tr -d '[:space:]' | awk '{print $1 % 11}')
               RANDOM_HASH=$(od -An -N7 -tx1 /dev/urandom | tr -d ' \n')
@@ -1061,6 +1085,42 @@ jobs:
 
           cd "${GITHUB_WORKSPACE}/kernel_workspace/common"
 
+          # Dry-run every hunk before touching the tree. The patches are keyed to
+          # android16-6.12 as a whole, not to a SUBLEVEL, so a net/tcp drift on a
+          # newer GKI release (6.12.69+) would otherwise half-apply and surface as
+          # a compile error 20 min later, or leave .rej files nobody reads. Exact
+          # match first, then fuzz 3; a failure here names the patch and dumps the
+          # offending hunks instead.
+          apply_bbr3_patch() {
+            local patch_file="$1"
+            local name
+            name="$(basename "$patch_file")"
+
+            # -F 0 on the first tier: GNU patch defaults to fuzz 2, which would
+            # silently absorb context drift. All 6.12 releases through 6.12.96
+            # take these patches at zero fuzz, so anything needing fuzz is drift
+            # worth a warning.
+            if patch -p1 --dry-run -F 0 < "$patch_file" >/dev/null 2>&1; then
+              echo "📝 Applying ${name}"
+              patch -p1 -F 0 < "$patch_file"
+              return 0
+            fi
+
+            if patch -p1 --dry-run --ignore-whitespace -F 3 < "$patch_file" >/dev/null 2>&1; then
+              echo "::warning::${name} needs fuzz against common-${KERNEL_BRANCH} (${TKERNEL_VERSION:-?}) — applying with -F 3"
+              patch -p1 --ignore-whitespace -F 3 < "$patch_file"
+              return 0
+            fi
+
+            echo "::error::BBRv3 patch ${name} does not apply to common-${KERNEL_BRANCH} (kernel ${TKERNEL_VERSION:-?})"
+            echo "--- dry-run output ---"
+            patch -p1 --dry-run --ignore-whitespace -F 3 < "$patch_file" 2>&1 | tail -40 || true
+            echo "----------------------"
+            echo "The ${KANDROID_VERSION}-${KERNEL_VERSION} patch set in Bouteillepleine/kernel_patches"
+            echo "predates this SUBLEVEL. Rebase it, or rerun with BBR3=false."
+            return 1
+          }
+
           MAIN_PATCH="${BBR3_DIR}/0001-net-tcp-backport-BBRv3-to-${KANDROID_VERSION}-${KERNEL_VERSION}.patch"
           DEBUGFS_PATCH="${BBR3_DIR}/0002-net-tcp-bbr3-add-debugfs-diagnostics-and-runtime-tunables.patch"
 
@@ -1072,8 +1132,7 @@ jobs:
             exit 1
           fi
 
-          echo "📝 Applying $(basename "$MAIN_PATCH")"
-          patch -p1 < "$MAIN_PATCH"
+          apply_bbr3_patch "$MAIN_PATCH"
 
           # 6.12 additionally gets debugfs diagnostics + runtime tunables.
           if [ "$KANDROID_VERSION" = "android16" ] && [ "$KERNEL_VERSION" = "6.12" ]; then
@@ -1081,8 +1140,7 @@ jobs:
               echo "::error::Required BBRv3 debugfs/tunables patch missing: $DEBUGFS_PATCH"
               exit 1
             fi
-            echo "📝 Applying $(basename "$DEBUGFS_PATCH")"
-            patch -p1 < "$DEBUGFS_PATCH"
+            apply_bbr3_patch "$DEBUGFS_PATCH"
           else
             echo "⏭️ Skipping debugfs/tunables patch for ${KANDROID_VERSION}-${KERNEL_VERSION}"
           fi
@@ -1093,14 +1151,13 @@ jobs:
           # as already-applied. Fail here rather than 20 min later in a compile error.
           if ! grep -qF 'int proc_dou8vec_minmax(' ./include/linux/sysctl.h; then
             echo "proc_dou8vec_minmax() missing — applying sysctl backports"
-            for p in sysctl_add_proc_dou8vec_minmax.patch \
-                     sysctl_fix_data-races_in_proc_dou8vec_minmax.patch; do
+            for p in sysctl_add_proc_dou8vec_minmax_pre_5_13.patch \
+                     sysctl_fix_data-races_in_proc_dou8vec_minmax_pre_5_13.patch; do
               if [ ! -f "$BBR3_DIR/$p" ]; then
                 echo "::error::BBRv3 needs $p but it is missing from $BBR3_DIR"
                 exit 1
               fi
-              echo "📝 Applying $p"
-              patch -p1 < "$BBR3_DIR/$p"
+              apply_bbr3_patch "$BBR3_DIR/$p"
             done
           else
             echo "✅ proc_dou8vec_minmax() already present — skipping sysctl backports"
@@ -1819,15 +1876,25 @@ jobs:
 
             `AK3_BakaSU_<ksuver>_<susfs>_<devices>_<kernel>.zip`
 
-            | Kernel | Built from | Flashable on |
-            |---|---|---|
-            | `6.12.23` | `common-android16-6.12-2025-06` | OnePlus 15 / 15T |
-            | `6.12.38` | `common-android16-6.12-2025-09` | OnePlus 15R / Ace 6T |
-            | `6.12.58` | `common-android16-6.12-2025-12` | all supported devices |
+            | Kernel | Built from | KMI | Flashable on |
+            |---|---|---|---|
+            | `6.12.23` | `common-android16-6.12-2025-06` | 5 | OnePlus 15 / 15T |
+            | `6.12.38` | `common-android16-6.12-2025-09` | 5 | OnePlus 15R / Ace 6T |
+            | `6.12.58` | `common-android16-6.12-2025-12` | 6 | all supported devices |
+            | `6.12.69` | `common-android16-6.12-2026-03` | 6 | KMI-6 firmware |
+            | `6.12.81` | `common-android16-6.12-2026-06` | 6 | KMI-6 firmware |
+            | `6.12.92` | `common-android16-6.12-2026-09` | 6 | KMI-6 firmware |
+            | *moving* | `common-android16-6.12-sp` | 6 | KMI-6 firmware |
+            | *moving* | `common-android16-6.12-lts` | 6 | KMI-6 firmware |
 
-            > ⚠️ `6.12.58` is **KMI generation 6**. Firmware still on 6.12.23 or
-            > 6.12.38 ships KMI-5 `vendor_dlkm` modules that will not load against
-            > it. Match the kernel to your firmware.
+            > ⚠️ Match the **KMI generation** to your firmware. A KMI-6 kernel
+            > (6.12.58 and newer) will not load the KMI-5 `vendor_dlkm` modules
+            > shipped by firmware on 6.12.23 or 6.12.38, and vice versa.
+            >
+            > The releases past `2025-12` are AOSP GKI branches no OnePlus OTA has
+            > shipped yet — they boot on KMI-6 firmware but are untested territory.
+            > `-sp` and `-lts` are moving tips, so their kernel version changes
+            > whenever Google merges LTS.
             >
             > Only the kernels actually built by this run are attached below.
 

@@ -30,6 +30,29 @@ It syncs Android GKI sources, adds **BakaSU**, optionally applies **SUSFS**, and
 > **6.12.58 / android16-6** (a KMI generation bump), so pick
 > `android16-6.12-2025-12` if your firmware is on that OTA.
 
+### Selectable GKI releases
+
+`GKI_RELEASE` accepts every buildable AOSP `android16-6.12` release:
+
+| GKI release | Kernel | KMI | Notes |
+|---|---|---|---|
+| `android16-6.12-2025-06` | 6.12.23 | 5 | OnePlus 15 / 15T launch firmware (retired upstream, auto-redirected to `deprecated/`) |
+| `android16-6.12-2025-09` | 6.12.38 | 5 | OnePlus 15R / Ace 6T launch firmware |
+| `android16-6.12-2025-12` | 6.12.58 | 6 | Sept-2026 OTA, Pad 3 Pro / Pad 4 |
+| `android16-6.12-2026-03` | 6.12.69 | 6 | no OnePlus OTA yet |
+| `android16-6.12-2026-06` | 6.12.81 | 6 | no OnePlus OTA yet |
+| `android16-6.12-2026-09` | 6.12.92 | 6 | no OnePlus OTA yet |
+| `android16-6.12-sp` | 6.12.81 | 6 | security-patch tip, moving target |
+| `android16-6.12-lts` | 6.12.96 | 6 | LTS tip, moving target |
+
+> Anything past `2025-12` is a plain AOSP branch — KMI-6, so it boots on
+> post-OTA firmware, but no OnePlus build has ever shipped it. `-sp` and `-lts`
+> are branch tips, so their kernel version moves with Google's LTS merges.
+>
+> Not offered: `2025-07` / `2025-08` (the manifest branch exists but Google
+> deleted the matching `kernel/common` ref, so `repo sync` cannot resolve it),
+> `2025-05-exp` (KMI 4), `-kminext` (KMI 7) and the `-desktop` variants.
+
 ### What `DEVICE=all` builds
 
 One kernel per GKI release, not one per device:
@@ -79,7 +102,7 @@ One kernel per GKI release, not one per device:
 | Option | Description |
 |---|---|
 | `DEVICE` | Device to build, or `all` |
-| `GKI_RELEASE` | `auto` = the device default above, or pin `android16-6.12-2025-06` (6.12.23) / `-2025-09` (6.12.38) / `-2025-12` (6.12.58) |
+| `GKI_RELEASE` | `auto` = the device default above, or pin any release from [Selectable GKI releases](#selectable-gki-releases) |
 | `KSU_META` | BakaSU source: `branch/tag/commit` |
 | `SUSFS_META` | Empty = latest, `-1` = disabled, hash = pinned |
 | `SUFFIX` | Kernel local version tail. **Empty = the stock suffix for the selected GKI release**, `-1` = disabled, or set your own |
@@ -103,7 +126,12 @@ so `uname -r` matches what the device shipped with:
 | `android16-6.12-2025-09` | `6.12.38-android16-5-g844001fb8721-ab14552068-4k` |
 | `android16-6.12-2025-12` | `6.12.58-android16-6-g925a103d123c-ab15898589-4k` |
 
-An unrecognised release falls back to a random OEM-shaped tail.
+Those three strings are OnePlus OEM build tails, so they only exist for releases
+an OTA has shipped. For any other release the suffix is synthesized instead:
+`<KMI generation>-g<kernel/common commit>-ab<id derived from that commit>-4k`,
+e.g. `6.12.92-android16-6-g<sha12>-ab<id>-4k`. It carries the correct KMI
+generation and the real upstream commit, and is stable across rebuilds of the
+same branch head, but it is not a string any device ever shipped.
 
 ---
 
