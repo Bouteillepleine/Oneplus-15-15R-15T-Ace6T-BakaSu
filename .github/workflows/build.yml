@@ -152,6 +152,10 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
 
+    env:
+      DEVICE: ${{ inputs.DEVICE }}
+      GKI_RELEASE: ${{ inputs.GKI_RELEASE }}
+
     steps:
       - name: Set Matrix Configuration
         id: set-matrix
@@ -159,43 +163,96 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ "${{ inputs.DEVICE }}" = "all" ]; then
-            # OnePlus 15 == 15T (sm8850), 15R == Ace 6T (sm8845) and Pad 3 Pro == Pad 4
-            # (sm8850) produce byte-identical Images per GKI release, so each unique
-            # kernel is built once and the ZIP labelled for both devices. OnePlus 15 is
-            # built twice because firmware older than the Sept-2026 OTA is on 6.12.23
-            # while newer is on 6.12.58; the ZIP name carries TKERNEL_VERSION so the
-            # two do not collide.
-            MATRIX='{"include":[{"id":"oneplus15","name":"OnePlus 15 / 15T (6.12.23)","codename":"Infinity","cpu":"sm8850","branch":"android16-6.12-2025-06","safe_name":"OnePlus15-15T"},{"id":"oneplus15r","name":"OnePlus 15R / Ace 6T (6.12.38)","codename":"macan","cpu":"sm8845","branch":"android16-6.12-2025-09","safe_name":"OnePlus15R-Ace6T"},{"id":"oneplus15","name":"OnePlus 15 / 15T / 15R / Ace 6T / Pad 3 Pro / Pad 4 (6.12.58)","codename":"Infinity / macan / canoe","cpu":"sm8850","branch":"android16-6.12-2025-12","safe_name":"OnePlus15-15T-15R-Ace6T-Pad3Pro-Pad4"}]}'
+          ALL_NAME="OnePlus 15 / 15T / 15R / Ace 6T / Pad 3 Pro / Pad 4"
+          ALL_SAFE="OnePlus15-15T-15R-Ace6T-Pad3Pro-Pad4"
+          ALL_CODENAME="Infinity / macan / canoe"
+
+          # One row per selectable GKI release:
+          #   branch|id|codename|cpu|job label|ZIP label
+          # The Image is generic per release — every device on the same release
+          # gets a byte-identical kernel_aarch64 — so DEVICE=all builds one job
+          # per release, not one per device, and the ZIP is labelled with every
+          # device that release is flashable on. KMI 5 releases predate the
+          # Sept-2026 OTA, so those two only cover their launch devices.
+          # cpu only has to keep its sm* prefix (the config steps test for it);
+          # id, codename and the job label are cosmetic, safe_name hits the ZIP.
+          RELEASES="\
+          android16-6.12-2025-06|oneplus15|Infinity|sm8850|OnePlus 15 / 15T (6.12.23)|OnePlus15-15T
+          android16-6.12-2025-09|oneplus15r|macan|sm8845|OnePlus 15R / Ace 6T (6.12.38)|OnePlus15R-Ace6T
+          android16-6.12-2025-12|oneplus15|${ALL_CODENAME}|sm8850|${ALL_NAME} (6.12.58)|${ALL_SAFE}
+          android16-6.12-2026-03|oneplus15|${ALL_CODENAME}|sm8850|${ALL_NAME} (6.12.69)|${ALL_SAFE}
+          android16-6.12-2026-06|oneplus15|${ALL_CODENAME}|sm8850|${ALL_NAME} (6.12.81)|${ALL_SAFE}
+          android16-6.12-2026-09|oneplus15|${ALL_CODENAME}|sm8850|${ALL_NAME} (6.12.92)|${ALL_SAFE}"
+
+          # One row per device, used when a single device is selected:
+          #   device|id|codename|cpu|job label|ZIP label|default release
+          DEVICES="\
+          oneplus15|oneplus15|Infinity|sm8850|OnePlus 15|OnePlus15|android16-6.12-2025-06
+          oneplus15t|oneplus15t|Infinity|sm8850|OnePlus 15T|OnePlus15T|android16-6.12-2025-06
+          oneplus15r|oneplus15r|macan|sm8845|OnePlus 15R|OnePlus15R|android16-6.12-2025-09
+          ace6t|ace6t|macan|sm8845|OnePlus Ace 6T|Ace6T|android16-6.12-2025-09
+          pad3pro|pad3pro|canoe|sm8850|OnePlus Pad 3 Pro|OnePlusPad3Pro|android16-6.12-2025-12
+          pad4|pad4|canoe|sm8850|OnePlus Pad 4|OnePlusPad4|android16-6.12-2025-12"
+
+          lookup() {
+            printf '%s\n' "$2" | sed 's/^[[:space:]]*//' | awk -F'|' -v k="$1" '$1==k {print; exit}'
+          }
+
+          entry() {
+            jq -nc --arg id "$1" --arg name "$2" --arg codename "$3" \
+                   --arg cpu "$4" --arg branch "$5" --arg safe_name "$6" \
+                   '{id:$id,name:$name,codename:$codename,cpu:$cpu,branch:$branch,safe_name:$safe_name}'
+          }
+
+          # Entry for one GKI release, labelled for every device it serves.
+          release_entry() {
+            local row
+            row="$(lookup "$1" "$RELEASES")"
+            if [ -z "$row" ]; then
+              echo "❌ No matrix row for GKI release: $1" >&2
+              return 1
+            fi
+            IFS='|' read -r branch id codename cpu label safe <<< "$row"
+            entry "$id" "$label" "$codename" "$cpu" "$branch" "$safe"
+          }
+
+          # Entry for one device. A pinned GKI_RELEASE replaces its default
+          # release but keeps the device's own labels, so the ZIP still says
+          # which device it was built for.
+          device_entry() {
+            local row
+            row="$(lookup "$1" "$DEVICES")"
+            if [ -z "$row" ]; then
+              echo "❌ Unknown device: $1" >&2
+              return 1
+            fi
+            IFS='|' read -r key id codename cpu label safe default_branch <<< "$row"
+            local branch="$default_branch"
+            if [ "$GKI_RELEASE" != "auto" ]; then
+              branch="$GKI_RELEASE"
+              label="${label} (${GKI_RELEASE#android16-6.12-})"
+            fi
+            entry "$id" "$label" "$codename" "$cpu" "$branch" "$safe"
+          }
+
+          if [ "$DEVICE" = "all" ]; then
+            if [ "$GKI_RELEASE" = "auto" ]; then
+              # Every selectable release, one build each.
+              ENTRIES="$(printf '%s\n' "$RELEASES" | sed 's/^[[:space:]]*//' | cut -d'|' -f1 \
+                | while read -r b; do [ -n "$b" ] && release_entry "$b"; done)"
+            else
+              # A pinned release is one kernel, not six copies of it.
+              ENTRIES="$(release_entry "$GKI_RELEASE")"
+            fi
           else
-            case "${{ inputs.DEVICE }}" in
-              oneplus15)
-                MATRIX='{"include":[{"id":"oneplus15","name":"OnePlus 15","codename":"Infinity","cpu":"sm8850","branch":"android16-6.12-2025-06","safe_name":"OnePlus15"}]}'
-                ;;
-              oneplus15t)
-                MATRIX='{"include":[{"id":"oneplus15t","name":"OnePlus 15T","codename":"Infinity","cpu":"sm8850","branch":"android16-6.12-2025-06","safe_name":"OnePlus15T"}]}'
-                ;;
-              oneplus15r)
-                MATRIX='{"include":[{"id":"oneplus15r","name":"OnePlus 15R","codename":"macan","cpu":"sm8845","branch":"android16-6.12-2025-09","safe_name":"OnePlus15R"}]}'
-                ;;
-              ace6t)
-                MATRIX='{"include":[{"id":"ace6t","name":"OnePlus Ace 6T","codename":"macan","cpu":"sm8845","branch":"android16-6.12-2025-09","safe_name":"Ace6T"}]}'
-                ;;
-              pad3pro)
-                MATRIX='{"include":[{"id":"pad3pro","name":"OnePlus Pad 3 Pro","codename":"canoe","cpu":"sm8850","branch":"android16-6.12-2025-12","safe_name":"OnePlusPad3Pro"}]}'
-                ;;
-              pad4)
-                MATRIX='{"include":[{"id":"pad4","name":"OnePlus Pad 4","codename":"canoe","cpu":"sm8850","branch":"android16-6.12-2025-12","safe_name":"OnePlusPad4"}]}'
-                ;;
-              *)
-                echo "❌ Unknown device: ${{ inputs.DEVICE }}"
-                exit 1
-                ;;
-            esac
+            ENTRIES="$(device_entry "$DEVICE")"
           fi
 
+          MATRIX="$(printf '%s\n' "$ENTRIES" | jq -sc '{include: .}')"
+
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
-          echo "$MATRIX" | jq .
+          echo "🎯 $(printf '%s\n' "$MATRIX" | jq '.include | length') build(s) queued:"
+          printf '%s\n' "$MATRIX" | jq -r '.include[] | "  • \(.name)  <-  common-\(.branch)"'
 
   build:
     name: >-
@@ -240,8 +297,11 @@ jobs:
         run: |
           set -euo pipefail
 
+          # prepare-matrix already resolves a pinned GKI_RELEASE into matrix.branch,
+          # so this is normally a no-op; it stays as a backstop in case a matrix row
+          # is ever added without honouring the input.
           KERNEL_BRANCH="${{ matrix.branch }}"
-          if [ "$GKI_RELEASE" != "auto" ]; then
+          if [ "$GKI_RELEASE" != "auto" ] && [ "$GKI_RELEASE" != "$KERNEL_BRANCH" ]; then
             echo "🧬 GKI release override: ${KERNEL_BRANCH} -> ${GKI_RELEASE}"
             KERNEL_BRANCH="$GKI_RELEASE"
           fi

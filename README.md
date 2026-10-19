@@ -55,15 +55,22 @@ It syncs Android GKI sources, adds **BakaSU**, optionally applies **SUSFS**, and
 
 One kernel per GKI release, not one per device:
 
-| GKI release | Kernel | Flashable on |
-|---|---|---|
-| `android16-6.12-2025-06` | 6.12.23 | OnePlus 15 / 15T |
-| `android16-6.12-2025-09` | 6.12.38 | OnePlus 15R / Ace 6T |
-| `android16-6.12-2025-12` | **6.12.58** | all six devices |
+| GKI release | Kernel | KMI | Flashable on |
+|---|---|---|---|
+| `android16-6.12-2025-06` | 6.12.23 | 5 | OnePlus 15 / 15T |
+| `android16-6.12-2025-09` | 6.12.38 | 5 | OnePlus 15R / Ace 6T |
+| `android16-6.12-2025-12` | **6.12.58** | 6 | all six devices |
+| `android16-6.12-2026-03` | 6.12.69 | 6 | all six devices |
+| `android16-6.12-2026-06` | 6.12.81 | 6 | all six devices |
+| `android16-6.12-2026-09` | 6.12.92 | 6 | all six devices |
 
-> ⚠️ A 6.12.58 kernel is **KMI generation 6**. Firmware still on 6.12.23 or
-> 6.12.38 ships KMI-5 `vendor_dlkm` modules, which will not load against it —
-> match the kernel to the firmware you are actually running.
+> ⚠️ A KMI-6 kernel (6.12.58 and newer) will not load the KMI-5 `vendor_dlkm`
+> modules shipped by firmware on 6.12.23 or 6.12.38, and vice versa — match the
+> kernel to the firmware you are actually running.
+
+Pinning `GKI_RELEASE` with `DEVICE=all` builds **that one release only**, not six
+copies of it. Pinning it with a single device builds that release for that device
+and labels the ZIP accordingly.
 
 ---
 
