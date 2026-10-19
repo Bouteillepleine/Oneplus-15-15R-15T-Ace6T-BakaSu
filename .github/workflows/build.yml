@@ -977,6 +977,43 @@ jobs:
             fi
           }
 
+          # susfs4ksu 9c9f19d (2026-10-19) re-synced with official KernelSU, and its
+          # fs/exec.c hunks now call ksu_setup_preinit_file() and
+          # ksu_preinit_handle_post_execveat() behind #ifndef KSU_NO_PREINIT.
+          # BakaSU carries neither symbol, so vmlinux fails to link with an
+          # undefined reference. Define the macro to compile those blocks out,
+          # but only while the KSU tree really has no preinit support, so the
+          # feature turns itself back on the day BakaSU gains it.
+          fix_susfs_ksu_no_preinit() {
+            local EXEC_FILE="./fs/exec.c"
+
+            [ -f "$EXEC_FILE" ] || return 0
+            grep -q '#ifndef KSU_NO_PREINIT' "$EXEC_FILE" || return 0
+            grep -q '^#define KSU_NO_PREINIT$' "$EXEC_FILE" && return 0
+
+            local KSU_SRC=""
+            for d in ./drivers/kernelsu ../KernelSU/kernel; do
+              [ -d "$d" ] && { KSU_SRC="$d"; break; }
+            done
+
+            if [ -n "$KSU_SRC" ] && grep -rqs 'ksu_setup_preinit_file' "$KSU_SRC"; then
+              echo "✅ KSU tree provides preinit — leaving the SUSFS preinit hooks enabled"
+              return 0
+            fi
+
+            # Define it above the first CONFIG_KSU_SUSFS block, which is the
+            # susfs_def.h include in the header block — well before the first
+            # #ifndef KSU_NO_PREINIT further down the file.
+            sed -i '0,/^#ifdef CONFIG_KSU_SUSFS$/s//#ifndef KSU_NO_PREINIT\n#define KSU_NO_PREINIT\n#endif\n&/' "$EXEC_FILE"
+
+            if ! grep -q '^#define KSU_NO_PREINIT$' "$EXEC_FILE"; then
+              echo "::error::Failed to define KSU_NO_PREINIT in $EXEC_FILE"
+              exit 1
+            fi
+
+            echo "🔧 Defined KSU_NO_PREINIT — ${KSU_SRC:-the KSU tree} has no preinit symbols"
+          }
+
           fix_susfs_missing_open_redirect_statfs() {
             local SUSFS_C="./fs/susfs.c"
             local STATFS_C="./fs/statfs.c"
@@ -1016,31 +1053,54 @@ jobs:
           }
 
           if [ "${SUSFS_META}" != "-1" ]; then
-            fix_susfs_exec_include() {
-              local pf="50_add_susfs_in_gki-${KANDROID_VERSION}-${KERNEL_VERSION}.patch"
-              [ -f "$pf" ] && [ -f fs/exec.c ] || return 0
-              if patch -p1 --dry-run < "$pf" >/dev/null 2>&1; then return 0; fi
-              grep -q '^#include <linux/ksm.h>$' fs/exec.c || return 0
-              grep -q 'susfs_def.h' fs/exec.c && return 0
-              cp fs/exec.c /tmp/exec.c.orig
-              awk '
-                /^\+\+\+ /{infile = ($0 ~ /fs\/exec\.c$/)}
-                infile && /^@@ -69,6 \+69,9 @@/ {skip=1; next}
-                skip && /^(@@ |diff --git |--- |\+\+\+ )/ {skip=0}
-                skip {next}
-                {print}
-              ' "$pf" > "${pf}.fixed"
-              sed -i 's|^#include <linux/ksm.h>$|&\n#ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs_def.h>\n#endif|' fs/exec.c
-              if patch -p1 --dry-run < "${pf}.fixed" >/dev/null 2>&1; then
-                mv "${pf}.fixed" "$pf"
-                echo "🔧 Fixed SUSFS exec.c include hunk for ${KERNEL_BRANCH}"
-              else
-                cp /tmp/exec.c.orig fs/exec.c
-                rm -f "${pf}.fixed"
-                echo "⚠️ exec.c include fix did not help; leaving patch unchanged"
+            # ── Reconcile the SUSFS kernel patch with this GKI sublevel ──────
+            # susfs4ksu rebases 50_add_susfs_in_gki-*.patch onto one release at
+            # a time (bd27568: "rebase susfs patches onto android16-6.12.92"),
+            # so its context matches that sublevel and no other. Four hunks sit
+            # on code that moved between 6.12.23 and 6.12.92 — the fs/exec.c
+            # susfs_def.h include (.23/.38 have no <linux/dma-buf.h>) and three
+            # fs/proc/task_mmu.c hunks (vma_pages() was renamed
+            # vma_data_pages() in .69, and .92 rewrote show_smaps_rollup()).
+            # All four are purely additive, so the helper drops the rejected
+            # ones and re-inserts their code on anchors that exist on every
+            # release. Hunks are matched by the content they add, never by @@
+            # line numbers: each rebase renumbers every hunk in the file, which
+            # is what silently broke the old exec.c-only fixup.
+            reconcile_susfs_patch() {
+              local pf="$1"
+              local rejects
+
+              [ -f "$pf" ] || return 0
+
+              rejects="$(stdbuf -o0 -e0 patch -p1 --dry-run < "$pf" 2>&1 \
+                | awk '/^checking file/{f=$3} /Hunk #[0-9]+ FAILED/{n=$2; gsub("#","",n); print f":"n}')" || true
+
+              if [ -z "$rejects" ]; then
+                echo "✅ SUSFS kernel patch applies to common-${KERNEL_BRANCH} unmodified"
+                return 0
               fi
+
+              echo "🔧 SUSFS kernel patch rejects on common-${KERNEL_BRANCH}:"
+              printf '%s\n' "$rejects" | sed 's/^/   rejected: /'
+
+              # shellcheck disable=SC2086
+              python3 -I "${GITHUB_WORKSPACE}/.github/scripts/susfs_patch_surgery.py" \
+                "$pf" . $rejects || return 1
+
+              if ! patch -p1 --dry-run < "$pf" >/dev/null 2>&1; then
+                echo "   still rejected after reconciliation:"
+                stdbuf -o0 -e0 patch -p1 --dry-run < "$pf" 2>&1 \
+                  | awk '/^checking file/{f=$3} /Hunk #[0-9]+ FAILED/{print "   "f" "$0}'
+                return 1
+              fi
+
+              echo "✅ SUSFS kernel patch reconciled for common-${KERNEL_BRANCH}"
             }
-            fix_susfs_exec_include
+
+            if ! reconcile_susfs_patch "50_add_susfs_in_gki-${KANDROID_VERSION}-${KERNEL_VERSION}.patch"; then
+              echo "::error::Could not reconcile SUSFS ${SUSVER:-unknown} with common-${KERNEL_BRANCH}"
+              exit 1
+            fi
 
             if ! apply_patch_safe "50_add_susfs_in_gki-${KANDROID_VERSION}-${KERNEL_VERSION}.patch" "SUSFS Integration"; then
               echo "::error::SUSFS integration patch did not apply -- SUSFS ${SUSVER:-unknown} is incompatible with common-${KERNEL_BRANCH}"
@@ -1049,6 +1109,7 @@ jobs:
             fix_op15_recovery_bootloop_sus_mount
             fix_susfs_getname_flags_arity
             fix_susfs_missing_open_redirect_statfs
+            fix_susfs_ksu_no_preinit
 
             if [ "${{ inputs.XUS_FIX }}" = "true" ]; then
               apply_patch_safe "../../Action-Build/patches/No_5uS.patch" "No_5uS Fix" || true

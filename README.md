@@ -102,6 +102,27 @@ and labels the ZIP accordingly.
 
 ---
 
+### SUSFS across GKI releases
+
+susfs4ksu rebases its kernel-side patch onto one GKI sublevel at a time, so
+upstream only ever matches a single release — `bd27568` moved it to 6.12.92 and
+it stopped applying to 6.12.23 through 6.12.81. The builder reconciles it:
+rejected hunks are dropped from the patch and their code re-inserted on anchors
+that exist on every release, matched by the content a hunk adds rather than by
+`@@` line numbers, which every rebase renumbers. A reject with no known
+re-insertion is still a hard failure, so a kernel never ships quietly missing a
+SUSFS feature. See [`.github/scripts/susfs_patch_surgery.py`](.github/scripts/susfs_patch_surgery.py).
+
+The same sync added `fs/exec.c` calls into KernelSU's preinit helpers, which
+BakaSU does not have; the builder defines `KSU_NO_PREINIT` to compile them out
+and stops doing so automatically once those symbols appear in the KSU tree.
+
+> ⚠️ BakaSU `main` currently refuses SUSFS builds outright — its
+> `kernel/tools/susfs_compat.mk` ends in `$(error Please wait susfs update.)`.
+> Until that lands on `main`, dispatch with `KSU_META=sync-susfs/⚡Ultra⚡/`.
+
+---
+
 ## ⚙️ Key Options
 
 | Option | Description |
