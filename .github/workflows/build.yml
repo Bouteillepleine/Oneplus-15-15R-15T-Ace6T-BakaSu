@@ -996,6 +996,45 @@ jobs:
           # undefined reference. Define the macro to compile those blocks out,
           # but only while the KSU tree really has no preinit support, so the
           # feature turns itself back on the day BakaSU gains it.
+          # susfs4ksu 1ac091c ("Reuse upstream selinux_hide existing code") made the
+          # kernel-side patch call official KernelSU's my_setprocattr() from
+          # security/selinux/hooks.c. BakaSU implements that same hook, with the
+          # same signature, under its own name — ksu_handle_selinux_setprocattr()
+          # in kernel/feature/selinux_hide.h — so vmlinux fails to link with
+          # "undefined symbol: my_setprocattr". Point the hook at whichever name
+          # the KSU tree actually exports.
+          fix_susfs_selinux_setprocattr_symbol() {
+            local HOOKS="./security/selinux/hooks.c"
+            local OURS="ksu_handle_selinux_setprocattr"
+
+            [ -f "$HOOKS" ] || return 0
+            grep -q 'my_setprocattr' "$HOOKS" || return 0
+
+            local KSU_SRC=""
+            for d in ./drivers/kernelsu ../KernelSU/kernel; do
+              [ -d "$d" ] && { KSU_SRC="$d"; break; }
+            done
+
+            if [ -n "$KSU_SRC" ] && grep -rqs 'int my_setprocattr(' "$KSU_SRC"; then
+              echo "✅ KSU tree exports my_setprocattr() — leaving the SUSFS setprocattr hook as-is"
+              return 0
+            fi
+
+            if [ -z "$KSU_SRC" ] || ! grep -rqs "int ${OURS}(" "$KSU_SRC"; then
+              echo "::error::$HOOKS calls my_setprocattr() but the KSU tree exports neither it nor ${OURS}()"
+              exit 1
+            fi
+
+            sed -i "s/\bmy_setprocattr\b/${OURS}/g" "$HOOKS"
+
+            if grep -q '\bmy_setprocattr\b' "$HOOKS"; then
+              echo "::error::Failed to repoint my_setprocattr() at ${OURS}() in $HOOKS"
+              exit 1
+            fi
+
+            echo "🔧 Repointed the SUSFS setprocattr hook at ${OURS}() — ${KSU_SRC} has no my_setprocattr()"
+          }
+
           fix_susfs_ksu_no_preinit() {
             local EXEC_FILE="./fs/exec.c"
 
@@ -1122,6 +1161,7 @@ jobs:
             fix_susfs_getname_flags_arity
             fix_susfs_missing_open_redirect_statfs
             fix_susfs_ksu_no_preinit
+            fix_susfs_selinux_setprocattr_symbol
 
             if [ "${{ inputs.XUS_FIX }}" = "true" ]; then
               apply_patch_safe "../../Action-Build/patches/No_5uS.patch" "No_5uS Fix" || true
