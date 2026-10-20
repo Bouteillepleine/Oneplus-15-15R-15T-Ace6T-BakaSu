@@ -998,14 +998,18 @@ jobs:
           # feature turns itself back on the day BakaSU gains it.
           # susfs4ksu 1ac091c ("Reuse upstream selinux_hide existing code") made the
           # kernel-side patch call official KernelSU's my_setprocattr() from
-          # security/selinux/hooks.c. BakaSU implements that same hook, with the
-          # same signature, under its own name — ksu_handle_selinux_setprocattr()
-          # in kernel/feature/selinux_hide.h — so vmlinux fails to link with
-          # "undefined symbol: my_setprocattr". Point the hook at whichever name
-          # the KSU tree actually exports.
-          fix_susfs_selinux_setprocattr_symbol() {
-            local HOOKS="./security/selinux/hooks.c"
-            local OURS="ksu_handle_selinux_setprocattr"
+          # security/selinux/hooks.c. BakaSU has no such symbol, and its
+          # susfs_compat.mk keys off the very marker susfs adds here: seeing
+          # ksu_selinux_hide_running in hooks.c it defines
+          # KSU_COMPAT_HAS_SUSFS_FEATURE_SELINUX_HIDE, which compiles out its own
+          # ksu_handle_selinux_setprocattr() and that hook's registration. Each side
+          # then waits for the other to own selinux_hide and vmlinux cannot link.
+          # Drop susfs's hooks.c hunks so the KSU side keeps the feature — the
+          # fallback BakaSU spells out in its own #error, and what this workflow
+          # already does to selinuxfs.c a few steps later. hooks.c carries nothing
+          # else from susfs, so the restore costs nothing but this one hand-off.
+          fix_susfs_selinux_hide_owner() {
+            local HOOKS="security/selinux/hooks.c"
 
             [ -f "$HOOKS" ] || return 0
             grep -q 'my_setprocattr' "$HOOKS" || return 0
@@ -1016,23 +1020,24 @@ jobs:
             done
 
             if [ -n "$KSU_SRC" ] && grep -rqs 'int my_setprocattr(' "$KSU_SRC"; then
-              echo "✅ KSU tree exports my_setprocattr() — leaving the SUSFS setprocattr hook as-is"
+              echo "✅ KSU tree exports my_setprocattr() — leaving SUSFS in charge of selinux_hide"
               return 0
             fi
 
-            if [ -z "$KSU_SRC" ] || ! grep -rqs "int ${OURS}(" "$KSU_SRC"; then
-              echo "::error::$HOOKS calls my_setprocattr() but the KSU tree exports neither it nor ${OURS}()"
+            if [ -z "$KSU_SRC" ] \
+               || ! grep -rqs 'KSU_COMPAT_HAS_SUSFS_FEATURE_SELINUX_HIDE' "$KSU_SRC"; then
+              echo "::error::$HOOKS calls my_setprocattr() but the KSU tree neither exports it nor implements selinux_hide itself"
               exit 1
             fi
 
-            sed -i "s/\bmy_setprocattr\b/${OURS}/g" "$HOOKS"
+            git restore "$HOOKS" 2>/dev/null || git checkout HEAD -- "$HOOKS"
 
-            if grep -q '\bmy_setprocattr\b' "$HOOKS"; then
-              echo "::error::Failed to repoint my_setprocattr() at ${OURS}() in $HOOKS"
+            if grep -qE 'my_setprocattr|ksu_selinux_hide_running' "$HOOKS"; then
+              echo "::error::Failed to drop the SUSFS selinux_hide hunks from $HOOKS"
               exit 1
             fi
 
-            echo "🔧 Repointed the SUSFS setprocattr hook at ${OURS}() — ${KSU_SRC} has no my_setprocattr()"
+            echo "🔧 Dropped the SUSFS selinux_hide hunks from $HOOKS — ${KSU_SRC} owns selinux_hide"
           }
 
           fix_susfs_ksu_no_preinit() {
@@ -1161,7 +1166,7 @@ jobs:
             fix_susfs_getname_flags_arity
             fix_susfs_missing_open_redirect_statfs
             fix_susfs_ksu_no_preinit
-            fix_susfs_selinux_setprocattr_symbol
+            fix_susfs_selinux_hide_owner
 
             if [ "${{ inputs.XUS_FIX }}" = "true" ]; then
               apply_patch_safe "../../Action-Build/patches/No_5uS.patch" "No_5uS Fix" || true
