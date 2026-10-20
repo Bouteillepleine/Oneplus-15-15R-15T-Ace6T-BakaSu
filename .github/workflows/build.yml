@@ -2056,7 +2056,7 @@ jobs:
             |---|---|---|---|
             | `6.12.23` | `common-android16-6.12-2025-06` | 5 | OnePlus 15 / 15T |
             | `6.12.38` | `common-android16-6.12-2025-09` | 5 | OnePlus 15R / Ace 6T |
-            | `6.12.58` | `common-android16-6.12-2025-12` | 6 | all supported devices |
+            | `6.12.58` | `common-android16-6.12-2025-12` | 6 | OnePlus 15 / 15T / 15R / Ace 6T / Pad 3 Pro / Pad 4 |
             | `6.12.69` | `common-android16-6.12-2026-03` | 6 | OnePlus 15 / 15T / 15R / Ace 6T / Pad 3 Pro / Pad 4 |
             | `6.12.81` | `common-android16-6.12-2026-06` | 6 | OnePlus 15 / 15T / 15R / Ace 6T / Pad 3 Pro / Pad 4 |
             | `6.12.92` | `common-android16-6.12-2026-09` | 6 | OnePlus 15 / 15T / 15R / Ace 6T / Pad 3 Pro / Pad 4 |

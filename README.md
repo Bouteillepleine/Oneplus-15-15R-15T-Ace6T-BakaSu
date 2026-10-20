@@ -38,7 +38,7 @@ It syncs Android GKI sources, adds **BakaSU**, optionally applies **SUSFS**, and
 |---|---|---|---|
 | `android16-6.12-2025-06` | 6.12.23 | 5 | OnePlus 15 / 15T launch firmware (retired upstream, auto-redirected to `deprecated/`) |
 | `android16-6.12-2025-09` | 6.12.38 | 5 | OnePlus 15R / Ace 6T launch firmware |
-| `android16-6.12-2025-12` | 6.12.58 | 6 | Sept-2026 OTA, Pad 3 Pro / Pad 4 |
+| `android16-6.12-2025-12` | 6.12.58 | 6 | OnePlus 15 / 15T / 15R / Ace 6T / Pad 3 Pro / Pad 4 (Sept-2026 OTA, and Pad 3 Pro / Pad 4 out of the box) |
 | `android16-6.12-2026-03` | 6.12.69 | 6 | OnePlus 15 / 15T / 15R / Ace 6T / Pad 3 Pro / Pad 4 (no OnePlus OTA on this release yet) |
 | `android16-6.12-2026-06` | 6.12.81 | 6 | OnePlus 15 / 15T / 15R / Ace 6T / Pad 3 Pro / Pad 4 (no OnePlus OTA on this release yet) |
 | `android16-6.12-2026-09` | 6.12.92 | 6 | OnePlus 15 / 15T / 15R / Ace 6T / Pad 3 Pro / Pad 4 (no OnePlus OTA on this release yet) |
@@ -59,10 +59,10 @@ One kernel per GKI release, not one per device:
 |---|---|---|---|
 | `android16-6.12-2025-06` | 6.12.23 | 5 | OnePlus 15 / 15T |
 | `android16-6.12-2025-09` | 6.12.38 | 5 | OnePlus 15R / Ace 6T |
-| `android16-6.12-2025-12` | **6.12.58** | 6 | all six devices |
-| `android16-6.12-2026-03` | 6.12.69 | 6 | all six devices |
-| `android16-6.12-2026-06` | 6.12.81 | 6 | all six devices |
-| `android16-6.12-2026-09` | 6.12.92 | 6 | all six devices |
+| `android16-6.12-2025-12` | **6.12.58** | 6 | OnePlus 15 / 15T / 15R / Ace 6T / Pad 3 Pro / Pad 4 |
+| `android16-6.12-2026-03` | 6.12.69 | 6 | OnePlus 15 / 15T / 15R / Ace 6T / Pad 3 Pro / Pad 4 |
+| `android16-6.12-2026-06` | 6.12.81 | 6 | OnePlus 15 / 15T / 15R / Ace 6T / Pad 3 Pro / Pad 4 |
+| `android16-6.12-2026-09` | 6.12.92 | 6 | OnePlus 15 / 15T / 15R / Ace 6T / Pad 3 Pro / Pad 4 |
 
 > ⚠️ A KMI-6 kernel (6.12.58 and newer) will not load the KMI-5 `vendor_dlkm`
 > modules shipped by firmware on 6.12.23 or 6.12.38, and vice versa — match the
