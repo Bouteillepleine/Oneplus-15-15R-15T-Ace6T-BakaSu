@@ -41,9 +41,9 @@ on:
 
       KSU_META:
         type: string
-        description: "📦 BakaSU source: branch/CustomTag/CommitHash"
+        description: "📦 BakaSU source: branch/CustomTag/CommitHash — sync-susfs is the only branch that accepts current SUSFS"
         required: false
-        default: "main/⚡Ultra⚡/"
+        default: "sync-susfs/⚡Ultra⚡/"
 
       SUFFIX:
         type: string
@@ -795,6 +795,18 @@ jobs:
           if [[ -n "${MANUAL_HASH}" ]]; then
             git fetch origin "${BRANCH_NAME}" --depth=100
             git checkout "${MANUAL_HASH}"
+          fi
+
+          # BakaSU main gates SUSFS builds behind an unconditional
+          # $(error Please wait susfs update.) in kernel/tools/susfs_compat.mk,
+          # pulled in by kernel/Kbuild whenever CONFIG_KSU_SUSFS is set. Catch it
+          # here rather than 12 minutes into Building kernel, where it surfaces as
+          # an opaque "drivers/kernelsu Error 2".
+          if [ "${SUSFS_META}" != "-1" ] \
+             && grep -qs '^\$(error Please wait susfs update' ./kernel/tools/susfs_compat.mk; then
+            echo "::error::BakaSU '${BRANCH_NAME}' refuses SUSFS builds (susfs_compat.mk still has \$(error Please wait susfs update))"
+            echo "Pick a branch that has caught up with SUSFS — KSU_META=sync-susfs/⚡Ultra⚡/ — or build with SUSFS_META=-1"
+            exit 1
           fi
 
           KSU_COMMIT_SHA="$(git rev-parse HEAD)"

@@ -117,9 +117,14 @@ The same sync added `fs/exec.c` calls into KernelSU's preinit helpers, which
 BakaSU does not have; the builder defines `KSU_NO_PREINIT` to compile them out
 and stops doing so automatically once those symbols appear in the KSU tree.
 
-> ⚠️ BakaSU `main` currently refuses SUSFS builds outright — its
-> `kernel/tools/susfs_compat.mk` ends in `$(error Please wait susfs update.)`.
-> Until that lands on `main`, dispatch with `KSU_META=sync-susfs/⚡Ultra⚡/`.
+> ⚠️ BakaSU `main` refuses SUSFS builds outright — its
+> `kernel/tools/susfs_compat.mk` ends in `$(error Please wait susfs update.)`,
+> which surfaces 12 minutes into the build as an opaque `drivers/kernelsu
+> Error 2`. `KSU_META` therefore defaults to **`sync-susfs/⚡Ultra⚡/`**, the
+> branch that has caught up with SUSFS, and the builder fails fast with a
+> readable message if the chosen branch still carries that `$(error)`.
+> Move `KSU_META` back to `main/⚡Ultra⚡/` once the sync lands there — or build
+> `main` with `SUSFS_META=-1`, which skips the gate entirely.
 
 ---
 
@@ -129,7 +134,7 @@ and stops doing so automatically once those symbols appear in the KSU tree.
 |---|---|
 | `DEVICE` | Device to build, or `all` |
 | `GKI_RELEASE` | `auto` = the device default above, or pin any release from [Selectable GKI releases](#selectable-gki-releases) |
-| `KSU_META` | BakaSU source: `branch/tag/commit` |
+| `KSU_META` | BakaSU source: `branch/tag/commit`. Defaults to `sync-susfs` — see the SUSFS note above |
 | `SUSFS_META` | Empty = latest, `-1` = disabled, hash = pinned |
 | `SUFFIX` | Kernel local version tail. **Empty = the stock suffix for the selected GKI release**, `-1` = disabled, or set your own |
 | `SUBLEVEL` | Override the kernel SUBLEVEL |
