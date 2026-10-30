@@ -71,6 +71,12 @@ on:
           - android16-6.12-2026-06
           - android16-6.12-2026-09
 
+      GKI_TAG:
+        type: string
+        description: "📌 Pin kernel/common to a release tag: rNN of the selected release, or a full android16-6.12-YYYY-MM_rNN | empty = branch head"
+        required: false
+        default: ""
+
       LSM:
         type: boolean
         description: "🛡️ Enable Baseband Guard"
@@ -155,6 +161,7 @@ jobs:
     env:
       DEVICE: ${{ inputs.DEVICE }}
       GKI_RELEASE: ${{ inputs.GKI_RELEASE }}
+      GKI_TAG: ${{ inputs.GKI_TAG }}
 
     steps:
       - name: Set Matrix Configuration
@@ -162,6 +169,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          case "$GKI_TAG" in
+            ""|r[0-9]*) ;;
+            android*_r[0-9]*)
+              TAG_RELEASE="${GKI_TAG%_r*}"
+              if [ "$GKI_RELEASE" != "auto" ] && [ "$GKI_RELEASE" != "$TAG_RELEASE" ]; then
+                echo "::error::GKI_TAG ${GKI_TAG} is not a tag of GKI_RELEASE ${GKI_RELEASE}"
+                exit 1
+              fi
+              GKI_RELEASE="$TAG_RELEASE"
+              echo "📌 GKI_TAG ${GKI_TAG} pins the release to ${GKI_RELEASE}"
+              ;;
+            *)
+              echo "::error::GKI_TAG must be rNN or android16-6.12-YYYY-MM_rNN, got '${GKI_TAG}'"
+              exit 1
+              ;;
+          esac
 
           ALL_NAME="OnePlus 15 / 15T / 15R / Ace 6T / Pad 3 Pro / Pad 4"
           ALL_SAFE="OnePlus15-15T-15R-Ace6T-Pad3Pro-Pad4"
@@ -257,6 +281,7 @@ jobs:
   build:
     name: >-
       ${{ matrix.name }}
+      ${{ inputs.GKI_TAG != '' && format('[{0}]', inputs.GKI_TAG) || '' }}
       ${{ inputs.LSM && '[LSM]' || '' }}
       ${{ inputs.SUSFS_META == '-1' && '[noSUSFS]' || '' }}
 
@@ -287,6 +312,7 @@ jobs:
       SUFFIX: ${{ inputs.SUFFIX }}
       SUBLEVEL: ${{ inputs.SUBLEVEL }}
       GKI_RELEASE: ${{ inputs.GKI_RELEASE }}
+      GKI_TAG: ${{ inputs.GKI_TAG }}
 
     steps:
       - name: Checkout
@@ -306,12 +332,20 @@ jobs:
             KERNEL_BRANCH="$GKI_RELEASE"
           fi
 
+          COMMON_TAG=""
+          case "$GKI_TAG" in
+            "") ;;
+            r[0-9]*) COMMON_TAG="${KERNEL_BRANCH}_${GKI_TAG}" ;;
+            *) COMMON_TAG="$GKI_TAG" ;;
+          esac
+
           {
             echo "DEVICE_ID=${{ matrix.id }}"
             echo "DEVICE_NAME=${{ matrix.name }}"
             echo "DEVICE_CODENAME=${{ matrix.codename }}"
             echo "CPU=${{ matrix.cpu }}"
             echo "KERNEL_BRANCH=${KERNEL_BRANCH}"
+            echo "COMMON_TAG=${COMMON_TAG}"
             echo "DEVICE_NAME_SAFE=${{ matrix.safe_name }}"
           } >> "$GITHUB_ENV"
 
@@ -320,6 +354,7 @@ jobs:
           echo "  Codename: ${{ matrix.codename }}"
           echo "  CPU: ${{ matrix.cpu }}"
           echo "  Branch: common-${KERNEL_BRANCH}"
+          echo "  Tag: ${COMMON_TAG:-none}"
           echo "  Safe name: ${{ matrix.safe_name }}"
 
       - name: Record Build Start Time
@@ -416,6 +451,7 @@ jobs:
           | Codename | \`${DEVICE_CODENAME}\` |
           | SoC | \`${CPU}\` |
           | Branch | \`common-${KERNEL_BRANCH}\` |
+          | Tag | \`${COMMON_TAG:-none}\` |
           | KSU_META | \`${KSU_META}\` |
           | SUSFS | ${SUSFS_STATUS} |
           | SUSFS requested version / rollback | \`${SUSFS_VERSION_TEXT}\` |
@@ -571,20 +607,34 @@ jobs:
           # refresh, unlike editing default.xml). Live branches skip this entirely,
           # so devices on a current branch are unaffected.
           COMMON_URL="https://android.googlesource.com/kernel/common"
-          if ! git ls-remote --exit-code --heads "$COMMON_URL" "refs/heads/${KERNEL_BRANCH}" >/dev/null 2>&1 \
+          COMMON_REVISION=""
+          COMMON_TAG_SHA=""
+          if [ -n "${COMMON_TAG:-}" ]; then
+            COMMON_TAG_SHA="$(git ls-remote --tags "$COMMON_URL" "refs/tags/${COMMON_TAG}" "refs/tags/${COMMON_TAG}^{}" | tail -n1 | cut -f1)"
+            if [ -z "$COMMON_TAG_SHA" ]; then
+              echo "::error::kernel/common has no tag '${COMMON_TAG}'"
+              exit 1
+            fi
+            COMMON_REVISION="refs/tags/${COMMON_TAG}"
+            echo "📌 kernel/common pinned to tag ${COMMON_TAG} (${COMMON_TAG_SHA:0:12})"
+          elif ! git ls-remote --exit-code --heads "$COMMON_URL" "refs/heads/${KERNEL_BRANCH}" >/dev/null 2>&1 \
              && git ls-remote --exit-code --heads "$COMMON_URL" "refs/heads/deprecated/${KERNEL_BRANCH}" >/dev/null 2>&1; then
+            COMMON_REVISION="deprecated/${KERNEL_BRANCH}"
             echo "⚠️ kernel/common '${KERNEL_BRANCH}' retired upstream — redirecting to 'deprecated/${KERNEL_BRANCH}'"
+          fi
+
+          if [ -n "$COMMON_REVISION" ]; then
             mkdir -p .repo/local_manifests
             {
               echo '<?xml version="1.0" encoding="UTF-8"?>'
               echo '<manifest>'
-              echo "  <extend-project name=\"kernel/common\" revision=\"deprecated/${KERNEL_BRANCH}\" />"
+              echo "  <extend-project name=\"kernel/common\" revision=\"${COMMON_REVISION}\" />"
               echo '</manifest>'
-            } > .repo/local_manifests/deprecated-redirect.xml
-            echo "📄 Wrote .repo/local_manifests/deprecated-redirect.xml:"
-            cat .repo/local_manifests/deprecated-redirect.xml
+            } > .repo/local_manifests/common-revision.xml
+            echo "📄 Wrote .repo/local_manifests/common-revision.xml:"
+            cat .repo/local_manifests/common-revision.xml
           else
-            rm -f .repo/local_manifests/deprecated-redirect.xml 2>/dev/null || true
+            rm -f .repo/local_manifests/common-revision.xml 2>/dev/null || true
           fi
           # -------------------------------------------------------------------
 
@@ -628,6 +678,15 @@ jobs:
               --current-branch \
               --optimized-fetch \
               --retry-fetches=3
+          fi
+
+          if [ -n "$COMMON_TAG_SHA" ]; then
+            COMMON_HEAD="$(git -C common rev-parse HEAD)"
+            if [ "$COMMON_HEAD" != "$COMMON_TAG_SHA" ]; then
+              echo "::error::kernel/common synced to ${COMMON_HEAD}, not tag ${COMMON_TAG} (${COMMON_TAG_SHA})"
+              exit 1
+            fi
+            echo "✅ kernel/common HEAD ${COMMON_HEAD:0:12} is ${COMMON_TAG}"
           fi
 
           if [ -e "common/BUILD.bazel" ]; then
@@ -2072,6 +2131,7 @@ jobs:
 
             | Property | Value |
             |----------|-------|
+            | GKI tag | `${{ env.COMMON_TAG || 'none' }}` |
             | KSU Version | `${{ env.KSUVER }}` |
             | KSU Commit | `${{ env.KSU_COMMIT_SHA }}` |
             | SUSFS Enabled | `${{ inputs.SUSFS_META != '-1' && 'Yes' || 'No' }}` |
@@ -2224,6 +2284,7 @@ jobs:
           | Android Version | \`${KANDROID_VERSION}\` |
           | Kernel Version | \`${TKERNEL_VERSION}\` |
           | Branch | \`common-${KERNEL_BRANCH}\` |
+          | Tag | \`${COMMON_TAG:-none}\` |
 
           ## BakaSU
 

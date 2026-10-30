@@ -72,6 +72,11 @@ Pinning `GKI_RELEASE` with `DEVICE=all` builds **that one release only**, not si
 copies of it. Pinning it with a single device builds that release for that device
 and labels the ZIP accordingly.
 
+`GKI_TAG` pins `kernel/common` to an exact AOSP release tag instead of the branch
+head: `r54` means `<selected release>_r54`, and a full `android16-6.12-2026-03_r54`
+also selects its release. The build fails if the tag does not exist or the sync
+lands anywhere else.
+
 ---
 
 ## ✨ Features
@@ -134,6 +139,7 @@ and stops doing so automatically once those symbols appear in the KSU tree.
 |---|---|
 | `DEVICE` | Device to build, or `all` |
 | `GKI_RELEASE` | `auto` = the device default above, or pin any release from [Selectable GKI releases](#selectable-gki-releases) |
+| `GKI_TAG` | Empty = branch head, `rNN` = that tag of the selected release, or a full `android16-6.12-YYYY-MM_rNN` tag |
 | `KSU_META` | BakaSU source: `branch/tag/commit`. Defaults to `sync-susfs` — see the SUSFS note above |
 | `SUSFS_META` | Empty = latest, `-1` = disabled, hash = pinned |
 | `SUFFIX` | Kernel local version tail. **Empty = the stock suffix for the selected GKI release**, `-1` = disabled, or set your own |
