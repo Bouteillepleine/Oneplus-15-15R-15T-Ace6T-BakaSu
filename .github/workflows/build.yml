@@ -41,9 +41,9 @@ on:
 
       KSU_META:
         type: string
-        description: "📦 BakaSU source: branch/CustomTag/CommitHash — sync-susfs is the only branch that accepts current SUSFS"
+        description: "📦 BakaSU source: branch/CustomTag/CommitHash — main carries SUSFS support since sync-susfs was merged and deleted"
         required: false
-        default: "sync-susfs/⚡Ultra⚡/"
+        default: "main/⚡Ultra⚡/"
 
       SUFFIX:
         type: string
@@ -847,6 +847,20 @@ jobs:
 
           cd ./KernelSU
 
+          # setup.sh swallows a failed checkout (`git checkout "$1" && echo … ||
+          # echo "[-] Checkout default branch"`), so a branch that no longer
+          # exists leaves the tree on main while every later log line still says
+          # the requested branch. sync-susfs went exactly that way once it was
+          # merged and deleted. Make the mismatch loud instead.
+          ACTUAL_REF="$(git rev-parse --abbrev-ref HEAD)"
+          if [[ -n "${BRANCH_NAME}" && "${ACTUAL_REF}" != "${BRANCH_NAME}" ]] \
+             && ! git rev-parse --verify --quiet "${BRANCH_NAME}^{commit}" >/dev/null; then
+            echo "::error::BakaSU has no ref '${BRANCH_NAME}' — setup.sh fell back to '${ACTUAL_REF}'"
+            echo "Available branches:"
+            git branch -r --format='  %(refname:short)'
+            exit 1
+          fi
+
           if [[ -n "${KSU_CUSTOM_TAG}" ]]; then
             echo "KSU_CUSTOM_TAG=${KSU_CUSTOM_TAG}" >> "$GITHUB_ENV"
           fi
@@ -856,15 +870,16 @@ jobs:
             git checkout "${MANUAL_HASH}"
           fi
 
-          # BakaSU main gates SUSFS builds behind an unconditional
+          # Some BakaSU branches gate SUSFS builds behind an unconditional
           # $(error Please wait susfs update.) in kernel/tools/susfs_compat.mk,
-          # pulled in by kernel/Kbuild whenever CONFIG_KSU_SUSFS is set. Catch it
-          # here rather than 12 minutes into Building kernel, where it surfaces as
-          # an opaque "drivers/kernelsu Error 2".
+          # pulled in by kernel/Kbuild whenever CONFIG_KSU_SUSFS is set. main has
+          # since caught up, but a pinned tag or hash can still land on it. Catch
+          # it here rather than 12 minutes into Building kernel, where it surfaces
+          # as an opaque "drivers/kernelsu Error 2".
           if [ "${SUSFS_META}" != "-1" ] \
              && grep -qs '^\$(error Please wait susfs update' ./kernel/tools/susfs_compat.mk; then
             echo "::error::BakaSU '${BRANCH_NAME}' refuses SUSFS builds (susfs_compat.mk still has \$(error Please wait susfs update))"
-            echo "Pick a branch that has caught up with SUSFS — KSU_META=sync-susfs/⚡Ultra⚡/ — or build with SUSFS_META=-1"
+            echo "Pick a ref that has caught up with SUSFS — KSU_META=main/⚡Ultra⚡/ — or build with SUSFS_META=-1"
             exit 1
           fi
 
@@ -1167,6 +1182,151 @@ jobs:
             echo "OK Restored susfs_open_redirect_spoof_vfs_statfs() dropped by susfs4ksu 35f819b"
           }
 
+          # susfs4ksu 2557ea2 (2026-11-02) turned priority_uid_filter into a
+          # compile-time feature but left susfs_switch_to_ksu_domain() and
+          # susfs_restore_creds() — its only two callers — outside the new
+          # #ifdef. fs/susfs.c is core kernel code built with the full -Werror,
+          # so without CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER those two statics
+          # are -Wunused-function and fs/susfs.o never links. BakaSU's Kconfig
+          # stops at KSU_SUSFS_SUS_MAP, so the symbol is simply absent there.
+          # Declaring it is enough to build, but the feature is only reachable
+          # with the two wiring points susfs's own KernelSU-side patch adds, so
+          # put all three in: the Kconfig stanza (upstream defaults it to y),
+          # the ioctl case, and the renew-on-package-change call. Everything in
+          # the syscall paths (kernel/sys.c, block/ioprio.c) already arrived
+          # with the 50_ patch. No-ops the day BakaSU carries the symbol itself.
+          fix_susfs_priority_uid_filter() {
+            local SUSFS_C="./fs/susfs.c"
+            local FEATURE="CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER"
+
+            [ -f "$SUSFS_C" ] || return 0
+            grep -qF "$FEATURE" "$SUSFS_C" || return 0
+
+            local KSU_SRC=""
+            for d in ./drivers/kernelsu ../KernelSU/kernel; do
+              [ -d "$d" ] && { KSU_SRC="$d"; break; }
+            done
+
+            if [ -z "$KSU_SRC" ]; then
+              echo "::error::$SUSFS_C wants $FEATURE but no KSU tree was found to wire it into"
+              exit 1
+            fi
+
+            local KCONFIG="${KSU_SRC}/Kconfig"
+            local DISPATCH="${KSU_SRC}/supercall/dispatch.c"
+            local OBSERVER="${KSU_SRC}/manager/pkg_observer.c"
+
+            if grep -qs '^config KSU_SUSFS_PRIORITY_UID_FILTER$' "$KCONFIG"; then
+              echo "✅ KSU tree already declares KSU_SUSFS_PRIORITY_UID_FILTER"
+              return 0
+            fi
+
+            for f in "$KCONFIG" "$DISPATCH" "$OBSERVER"; do
+              [ -f "$f" ] && continue
+              echo "::error::$f not found — cannot wire $FEATURE into ${KSU_SRC}"
+              exit 1
+            done
+
+            # Place the stanza before the endmenu that closes the SUSFS submenu,
+            # located from the last `config KSU_SUSFS*` entry rather than by line
+            # number — BakaSU reorders these as it tracks susfs.
+            if ! awk '
+              { line[NR] = $0 }
+              /^config KSU_SUSFS/ { last = NR }
+              END {
+                if (!last) exit 1
+                for (i = last; i <= NR; i++)
+                  if (line[i] ~ /^endmenu[ \t]*$/) { at = i; break }
+                if (!at) exit 1
+                for (i = 1; i <= NR; i++) {
+                  if (i == at) {
+                    print "config KSU_SUSFS_PRIORITY_UID_FILTER"
+                    print "    bool \"Enable to allow adding user-defined uids that will be hidden from getpriority/setpriority/ioprio_get/ioprio_set syscall\""
+                    print "    depends on KSU_SUSFS"
+                    print "    default y"
+                    print "    help"
+                    print "        - Allow hiding user-defined uids from syscalls like getpriority/setpriority/ioprio_get/ioprio_set."
+                    print "        - Effective on all processes with uid >= 10000."
+                    print ""
+                  }
+                  print line[i]
+                }
+              }
+            ' "$KCONFIG" > "${KCONFIG}.new"; then
+              rm -f "${KCONFIG}.new"
+              echo "::error::Found no 'config KSU_SUSFS' entry followed by an endmenu in $KCONFIG — cannot place $FEATURE"
+              exit 1
+            fi
+            mv "${KCONFIG}.new" "$KCONFIG"
+
+            if ! grep -q '^config KSU_SUSFS_PRIORITY_UID_FILTER$' "$KCONFIG"; then
+              echo "::error::Failed to add KSU_SUSFS_PRIORITY_UID_FILTER to $KCONFIG"
+              exit 1
+            fi
+
+            # The ioctl case, so ksu_susfs can actually set the filter — the
+            # kernel advertises the feature through CMD_SUSFS_SHOW_ENABLED_FEATURES
+            # once the config is on, so a missing case would be a lie.
+            if ! grep -q 'CMD_SUSFS_SET_PRIORITY_UID_FILTER' "$DISPATCH"; then
+              awk '
+                !done && /case CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING:/ {
+                  match($0, /^[ \t]*/)
+                  ind = substr($0, 1, RLENGTH)
+                  print "#ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER"
+                  print ind "case CMD_SUSFS_SET_PRIORITY_UID_FILTER: {"
+                  print ind "    susfs_set_priority_uid_filter(arg);"
+                  print ind "    return 0;"
+                  print ind "}"
+                  print "#endif // #ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER"
+                  done = 1
+                }
+                { print }
+              ' "$DISPATCH" > "${DISPATCH}.new" && mv "${DISPATCH}.new" "$DISPATCH"
+
+              if ! grep -q 'CMD_SUSFS_SET_PRIORITY_UID_FILTER' "$DISPATCH"; then
+                echo "::error::Failed to add CMD_SUSFS_SET_PRIORITY_UID_FILTER to $DISPATCH"
+                exit 1
+              fi
+            fi
+
+            # An app's uid changes when it is reinstalled, so the bitmap has to be
+            # re-resolved from the stored package names whenever packages.list
+            # moves. Same spot susfs patches in official KernelSU: the task_work
+            # that the fsnotify watch defers to, never the fsnotify handler.
+            if ! grep -q 'susfs_parse_priority_app_strings' "$OBSERVER"; then
+              awk '
+                !inc && /^#include <linux\/version.h>/ {
+                  print
+                  print "#ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER"
+                  print "#include <linux/susfs.h>"
+                  print "#endif"
+                  inc = 1
+                  next
+                }
+                !call && /^[ \t]*track_throne\(/ {
+                  print
+                  match($0, /^[ \t]*/)
+                  ind = substr($0, 1, RLENGTH)
+                  print "#ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER"
+                  print ind "// Renew the priority uid bitmap filter"
+                  print ind "susfs_parse_priority_app_strings();"
+                  print "#endif // #ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER"
+                  call = 1
+                  next
+                }
+                { print }
+              ' "$OBSERVER" > "${OBSERVER}.new" && mv "${OBSERVER}.new" "$OBSERVER"
+
+              if ! grep -q 'susfs_parse_priority_app_strings' "$OBSERVER" \
+                 || ! grep -q '^#include <linux/susfs.h>$' "$OBSERVER"; then
+                echo "::error::Failed to wire susfs_parse_priority_app_strings() into $OBSERVER"
+                exit 1
+              fi
+            fi
+
+            echo "🔧 Wired $FEATURE into ${KSU_SRC} — Kconfig, ioctl case and package-change renew"
+          }
+
           if [ "${SUSFS_META}" != "-1" ]; then
             # ── Reconcile the SUSFS kernel patch with this GKI sublevel ──────
             # susfs4ksu rebases 50_add_susfs_in_gki-*.patch onto one release at
@@ -1224,6 +1384,7 @@ jobs:
             fix_op15_recovery_bootloop_sus_mount
             fix_susfs_getname_flags_arity
             fix_susfs_missing_open_redirect_statfs
+            fix_susfs_priority_uid_filter
             fix_susfs_ksu_no_preinit
             fix_susfs_selinux_hide_owner
 
@@ -1534,6 +1695,7 @@ jobs:
             force_config "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=n"
             append_config "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y"
             append_config "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
+            append_config "CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=y"
           else
             force_config "CONFIG_KSU_SUSFS=n"
           fi
@@ -1695,7 +1857,7 @@ jobs:
           CONFIG_FILE="./arch/arm64/configs/gki_defconfig"
 
           echo "🔎 Important defconfig entries:"
-          grep -nE 'CONFIG_KSU=|CONFIG_KSU_SUSFS=|CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=|CONFIG_KPM=|CONFIG_TCP_CONG_BBR=|CONFIG_TCP_CONG_BBR3=|CONFIG_NET_SCH_FQ=|CONFIG_IP_SET=|CONFIG_DEBUG_KERNEL=' "$CONFIG_FILE" || true
+          grep -nE 'CONFIG_KSU=|CONFIG_KSU_SUSFS=|CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=|CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=|CONFIG_KPM=|CONFIG_TCP_CONG_BBR=|CONFIG_TCP_CONG_BBR3=|CONFIG_NET_SCH_FQ=|CONFIG_IP_SET=|CONFIG_DEBUG_KERNEL=' "$CONFIG_FILE" || true
 
           if grep -q '^CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y' "$CONFIG_FILE"; then
             echo "❌ ERROR: CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS is enabled"
@@ -1761,7 +1923,7 @@ jobs:
           GENERATED_CONFIG="$(find out -name ".config" -type f -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2- || true)"
 
           if [ -n "$GENERATED_CONFIG" ] && [ -f "$GENERATED_CONFIG" ]; then
-            grep -nE 'CONFIG_KSU=|CONFIG_KSU_SUSFS=|CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS|CONFIG_KPM=|CONFIG_TCP_CONG_BBR=|CONFIG_TCP_CONG_BBR3=|CONFIG_NET_SCH_FQ=|CONFIG_IP_SET=|CONFIG_DEBUG_KERNEL|CONFIG_KSU_FULL_NAME_FORMAT' "$GENERATED_CONFIG" || true
+            grep -nE 'CONFIG_KSU=|CONFIG_KSU_SUSFS=|CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=|CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS|CONFIG_KPM=|CONFIG_TCP_CONG_BBR=|CONFIG_TCP_CONG_BBR3=|CONFIG_NET_SCH_FQ=|CONFIG_IP_SET=|CONFIG_DEBUG_KERNEL|CONFIG_KSU_FULL_NAME_FORMAT' "$GENERATED_CONFIG" || true
 
             if ! grep -q '^CONFIG_KSU=y' "$GENERATED_CONFIG"; then
               echo "❌ ERROR: CONFIG_KSU=y missing in generated .config"
@@ -1771,6 +1933,15 @@ jobs:
             if [ "${SUSFS_META}" != "-1" ]; then
               if ! grep -q '^CONFIG_KSU_SUSFS=y' "$GENERATED_CONFIG"; then
                 echo "❌ ERROR: CONFIG_KSU_SUSFS=y missing in generated .config"
+                exit 1
+              fi
+
+              # fs/susfs.c leaves susfs_switch_to_ksu_domain()/susfs_restore_creds()
+              # callerless without this, and core-kernel -Werror kills fs/susfs.o
+              # 10 minutes into Building kernel. Catch a dropped Kconfig stanza here.
+              if grep -qs CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER common/fs/susfs.c \
+                 && ! grep -q '^CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=y' "$GENERATED_CONFIG"; then
+                echo "❌ ERROR: fs/susfs.c needs CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER but it is not set in the generated .config"
                 exit 1
               fi
             fi
