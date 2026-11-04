@@ -82,6 +82,7 @@ lands anywhere else.
 ## ✨ Features
 
 - BakaSU integration
+- AutoFDO profile-guided codegen, inherited from the AOSP GKI build
 - Optional SUSFS
 - Optional Baseband Guard / ✨LSM Do not enable as it does not work with 6.12 kernels !✨
 - Optional Netfilter + IPSet
@@ -91,6 +92,7 @@ lands anywhere else.
 - Optional ADIOS block MQ I/O scheduler
 - Optional Sultan-derived power/memory tweaks (off by default)
 - Optional Unicode bypass patch
+- Optional No_5uS patch
 - Flashable AnyKernel3 ZIP
 - GitHub Release or artifact output
 - Build logs, hashes, and summary
@@ -140,7 +142,7 @@ and stops doing so automatically once those symbols appear in the KSU tree.
 | `DEVICE` | Device to build, or `all` |
 | `GKI_RELEASE` | `auto` = the device default above, or pin any release from [Selectable GKI releases](#selectable-gki-releases) |
 | `GKI_TAG` | Empty = branch head, `rNN` = that tag of the selected release, or a full `android16-6.12-YYYY-MM_rNN` tag |
-| `KSU_META` | BakaSU source: `branch/tag/commit`. Defaults to `sync-susfs` — see the SUSFS note above |
+| `KSU_META` | BakaSU source: `branch/CustomTag/CommitHash`. See the SUSFS note above |
 | `SUSFS_META` | Empty = latest, `-1` = disabled, hash = pinned |
 | `SUFFIX` | Kernel local version tail. **Empty = the stock suffix for the selected GKI release**, `-1` = disabled, or set your own |
 | `SUBLEVEL` | Override the kernel SUBLEVEL |
@@ -150,7 +152,13 @@ and stops doing so automatically once those symbols appear in the KSU tree.
 | `BBR3` | Backport BBRv3 (patches `net/tcp`, adds `CONFIG_TCP_CONG_BBR3`) |
 | `ADIOS` | Add the ADIOS block MQ I/O scheduler and make it the default |
 | `SULTAN_TWEAKS` | Apply Sultan-derived power/memory patches from WildKernels (dry-run checked, off by default) |
+| `UNICODE_BYPASS` | Apply the Unicode invisible-codepoint bypass patch |
+| `XUS_FIX` | Apply the No_5uS patch |
+| `BUILD_TIME` | Kernel build timestamp. `F` = current UTC time, or a custom string |
+| `SUSFS_DEV` | Build against the SUSFS dev branch |
+| `KSU_SETUP_BRANCH` | BakaSU `setup.sh` branch |
 | `CREATE_RELEASE` | Publish ZIP to GitHub Releases |
+| `SPACE_NOCLEAN` | Skip the disk-space cleanup |
 
 ### Kernel suffix
 
