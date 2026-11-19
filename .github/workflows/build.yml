@@ -904,7 +904,7 @@ jobs:
           cd kernel_workspace
 
           [ -d "SukiSU_patch" ] || git clone --depth=1 https://github.com/ShirkNeko/SukiSU_patch.git
-          [ -d "Action-Build" ] || git clone --depth=1 -b SukiSU-Ultra https://github.com/Numbersf/Action-Build.git
+          [ -d "Action-Build" ] || git clone --depth=1 -b SukiSU-Nova https://github.com/Numbersf/Action-Build.git
 
           if [ "${SUSFS_META}" != "-1" ]; then
             BR="gki-${KANDROID_VERSION}-${KERNEL_VERSION}$( [ "${{ inputs.SUSFS_DEV }}" = "true" ] && echo "-dev" || true )"
