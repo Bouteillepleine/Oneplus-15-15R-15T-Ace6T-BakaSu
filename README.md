@@ -45,6 +45,38 @@ bypass · optional No_5uS · AnyKernel3 ZIP, GitHub Release or artifact, build l
 
 ---
 
+<details>
+<summary><b>🛡️ Security backports</b> — 17 critical upstream CVE fixes (click to expand)</summary>
+
+<!-- from Bouteillepleine/kernel_patches common/cve/6.12 + the rtmutex fix; regenerate when the series changes -->
+
+Bugs exploited in the wild, app-reachable use-after-frees (binder, futex, af_unix, epoll, timers,
+pipe, memfd), remote TCP and IP-fragment bugs, and an exFAT bug reachable from a plugged-in drive.
+Each GKI release applies only the fixes its branch still lacks; the build summary lists the result
+per CVE.
+
+| CVE | Fix |
+|---|---|
+| [CVE-2026-31554](https://nvd.nist.gov/vuln/detail/CVE-2026-31554) | futex: Require sys_futex_requeue() to have identical flags |
+| [CVE-2026-43074](https://nvd.nist.gov/vuln/detail/CVE-2026-43074) | eventpoll: defer struct eventpoll free to RCU grace period |
+| [CVE-2026-43499](https://nvd.nist.gov/vuln/detail/CVE-2026-43499) | rtmutex: Use waiter::task instead of current in remove_waiter() |
+| [CVE-2026-53361](https://nvd.nist.gov/vuln/detail/CVE-2026-53361) | af_unix: Set gc_in_progress to true in unix_gc(). |
+| [CVE-2026-63808](https://nvd.nist.gov/vuln/detail/CVE-2026-63808) | exfat: fix potential use-after-free in exfat_find_dir_entry() |
+| [CVE-2026-63952](https://nvd.nist.gov/vuln/detail/CVE-2026-63952) | memfd: deny writeable mappings when implying SEAL_WRITE |
+| [CVE-2026-64109](https://nvd.nist.gov/vuln/detail/CVE-2026-64109) | af_unix: Fix UAF read of tail->len in unix_stream_data_wait() |
+| [CVE-2026-64468](https://nvd.nist.gov/vuln/detail/CVE-2026-64468) | binder: fix UAF in binder_free_transaction() |
+| [CVE-2026-64469](https://nvd.nist.gov/vuln/detail/CVE-2026-64469) | binder: fix UAF in binder_thread_release() |
+| [CVE-2026-64560](https://nvd.nist.gov/vuln/detail/CVE-2026-64560) | posix-cpu-timers: Prevent UAF caused by non-leader exec() race |
+| [CVE-2026-74662](https://nvd.nist.gov/vuln/detail/CVE-2026-74662) | inet: frags: publish queues before arming timer |
+| [CVE-2026-80521](https://nvd.nist.gov/vuln/detail/CVE-2026-80521) | af_unix: Unlink scc_entry in unix_del_edge(). |
+| [CVE-2026-90003](https://nvd.nist.gov/vuln/detail/CVE-2026-90003) | futex: Prevent rcuwait use-after-free during requeue PI |
+| [CVE-2026-98260](https://nvd.nist.gov/vuln/detail/CVE-2026-98260) | exec: Cleanup POSIX timers right after de_thread() |
+| [CVE-2026-98374](https://nvd.nist.gov/vuln/detail/CVE-2026-98374) | tcp: fix use-after-free of retransmit_skb_hint in tcp_send_synack() |
+| [CVE-2026-98432](https://nvd.nist.gov/vuln/detail/CVE-2026-98432) | ipv4: free inet_opt and ireq_opt after an RCU grace period |
+| [CVE-2026-99203](https://nvd.nist.gov/vuln/detail/CVE-2026-99203) | pipe: preserve existing fasync readers on writer setup failure |
+
+</details>
+
 ## 🚀 Usage
 
 Fork the repo, open **Actions**, run the workflow, pick a device and options, download the ZIP.

@@ -894,6 +894,91 @@ jobs:
           echo "✅ BakaSU commit: ${KSU_COMMIT_SHA}"
           echo "✅ BakaSU version: ${KSU_VERSION}"
 
+      - name: Apply CVE backports
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          STEP_START=$(date +%s)
+
+          # Critical upstream CVE fixes from Bouteillepleine/kernel_patches. Each one is
+          # applied only if this tree still lacks it; anything that neither applies nor
+          # is detected as present fails the build. Runs before SUSFS, which is checked
+          # to patch identically on top of it.
+          PATCHES_SRC="${GITHUB_WORKSPACE}/kernel_workspace/bouton_kernel_patches"
+          [ -d "$PATCHES_SRC" ] || \
+            git clone --depth=1 https://github.com/Bouteillepleine/kernel_patches.git "$PATCHES_SRC"
+          CVE="${PATCHES_SRC}/common/cve"
+          D="${CVE}/${KERNEL_VERSION}"
+          R="${RUNNER_TEMP}/cve_results.txt"
+          : > "$R"
+
+          cd kernel_workspace/common
+          if [ -d "$D" ]; then
+            SUB=$(awk '/^SUBLEVEL *=/{print $3; exit}' Makefile)
+            for n in $(ls "$D" | grep -oE '^[0-9]{4}-CVE-[0-9]+-[0-9]+' | sort -u); do
+              r=""
+              for v in "$D/$n.patch" "$D/$n".v*.patch; do
+                [ -f "$v" ] || continue
+                if patch -p1 -R --dry-run -s -f -F0 < "$v" >/dev/null 2>&1; then r="already present"; break; fi
+                if patch -p1 --dry-run -s -f -F0 < "$v" >/dev/null 2>&1; then
+                  patch -p1 -s -f -F0 --no-backup-if-mismatch < "$v"; r="applied $(basename "$v")"; break
+                fi
+              done
+              if [ -z "$r" ]; then
+                while IFS='|' read -r pn f kind re; do
+                  [ "$pn" = "$n" ] || continue
+                  if [ "$kind" = fixed ] && grep -qP -- "$re" "$f"; then r="already present (marker)"; break; fi
+                  if [ "$kind" = requires ] && ! grep -qP -- "$re" "$f"; then r="not applicable"; break; fi
+                  if [ "$kind" = minsub ] && [ "$SUB" -lt "$re" ]; then r="not applicable (< .$re)"; break; fi
+                done < "$D/markers"
+              fi
+              [ -n "$r" ] || { echo "::error::$n does not apply to common-${KERNEL_BRANCH}"; exit 1; }
+              echo "$n: $r"
+              printf '%s\t%s\t%s\n' "${n#*-}" "$r" "$(sed -n 's/^Subject: //p' "$D/$n.patch" | head -1)" >> "$R"
+            done
+          else
+            echo "no CVE backport series for ${KERNEL_VERSION}"
+          fi
+
+          if [ "$KERNEL_VERSION" = "6.12" ]; then
+            RT=kernel/locking/rtmutex.c
+            RT_SUBJ="rtmutex: Use waiter::task instead of current in remove_waiter()"
+            if ! grep -q 'waiter_task' "$RT"; then
+              P="$CVE/cve-2026-43499-rtmutex-full.patch"
+            elif ! grep -q 'never enqueued' "$RT"; then
+              P="$CVE/cve-2026-43499-rtmutex-followup.patch"
+            else
+              P=""
+            fi
+            if [ -z "$P" ]; then
+              echo "CVE-2026-43499: already present"
+              printf 'CVE-2026-43499\talready present\t%s\n' "$RT_SUBJ" >> "$R"
+            else
+              patch -p1 --no-backup-if-mismatch < "$P"
+              grep -q 'never enqueued' "$RT" && grep -q 'unlikely(ret < 0)' kernel/locking/rtmutex_api.c
+              echo "CVE-2026-43499: applied $(basename "$P")"
+              printf 'CVE-2026-43499\tapplied %s\t%s\n' "$(basename "$P")" "$RT_SUBJ" >> "$R"
+            fi
+          fi
+
+          a=$(awk -F'\t' '$2 ~ /^applied/' "$R" | wc -l)
+          p=$(awk -F'\t' '$2 ~ /^already present/' "$R" | wc -l)
+          n=$(awk -F'\t' '$2 ~ /^not applicable/' "$R" | wc -l)
+          echo "CVE_SUMMARY=${a} applied · ${p} already present · ${n} n/a" >> "$GITHUB_ENV"
+          echo "CVE_TOTAL=$(cut -f1 "$R" | sort -u | grep -c . || true)" >> "$GITHUB_ENV"
+          {
+            echo "CVE_TABLE<<CVE_EOF"
+            echo "| CVE | Fix |"
+            echo "|---|---|"
+            cut -f1,3 "$R" | sort -t- -k2,2n -k3,3n | while IFS=$'\t' read -r c subj; do
+              echo "| [${c}](https://nvd.nist.gov/vuln/detail/${c}) | ${subj//|/\\|} |"
+            done
+            echo "CVE_EOF"
+          } >> "$GITHUB_ENV"
+          echo "DURATION_CVE=$(($(date +%s) - STEP_START))s" >> "$GITHUB_ENV"
+          echo "✅ CVE backports: ${a} applied · ${p} already present · ${n} n/a"
+
       - name: Apply Patches — BakaSU and SUSFS
         shell: bash
         run: |
@@ -2322,6 +2407,19 @@ jobs:
             - Baseband Guard: `${{ inputs.LSM }}`
             - Unicode Bypass: `${{ inputs.UNICODE_BYPASS }}`
             - SUSFS: `${{ inputs.SUSFS_META != '-1' && 'Enabled' || 'Disabled' }}`
+
+            ### 🛡️ Security backports
+
+            **${{ env.CVE_TOTAL }}** critical upstream CVE fixes for 6.12 (exploited in the wild, app-reachable
+            use-after-free in binder / futex / af_unix / epoll / timers / pipe / memfd, remote TCP and IP-fragment
+            bugs, or a crafted exFAT drive). Each kernel applies only what its GKI branch still lacks; the build
+            summary lists the result per CVE.
+
+            <details><summary>Show the CVE list</summary>
+
+            ${{ env.CVE_TABLE }}
+
+            </details>
           files: ${{ env.ZIP_NAME }}
           fail_on_unmatched_files: true
         env:
@@ -2488,6 +2586,14 @@ jobs:
           | Image SHA256 | \`${IMAGE_SHA256}\` |
           | Release | ${RELEASE_CELL} |
 
+          ## 🛡️ CVE backports
+
+          ${CVE_SUMMARY:-not run}
+
+          | CVE | Result | Fix |
+          |-----|--------|-----|
+          $( [ -s "${RUNNER_TEMP}/cve_results.txt" ] && awk -F'\t' '{printf "| %s | %s | %s |\n", $1, $2, $3}' "${RUNNER_TEMP}/cve_results.txt" )
+
           ## ⚡ Performance
 
           | Metric | Value |
@@ -2501,6 +2607,7 @@ jobs:
           |------|----------|
           | Environment setup | ${DURATION_ENV_SETUP:-N/A} |
           | Sync GKI sources | ${DURATION_SYNC_GKI:-N/A} |
+          | Apply CVE backports | ${DURATION_CVE:-N/A} |
           | Apply patches | ${DURATION_PATCHES:-N/A} |
           | Apply BBRv3 | ${DURATION_BBR3:-skipped} |
           | Apply ADIOS | ${DURATION_ADIOS:-skipped} |
